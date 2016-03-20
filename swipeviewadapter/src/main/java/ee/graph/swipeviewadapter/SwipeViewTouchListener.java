@@ -69,10 +69,10 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
             mLatestDeltaX = 0;
 
     private boolean
+            canSlideIn = true,
             mIsDown,
-            mIsFadeOut,
-            mIsMoving,
-            mIsEnabled,
+            mIsMoving = false,
+            mIsEnabled = true,
             mIsFar,
             mIsPerformingDismiss = false;
 
@@ -168,14 +168,9 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         setEnabled(scrollState != AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL);
         slideInView(-1);
     }
-    /**
-     * Set whether the list item should fade out when swiping or not.
-     * The default value for this property is false
-     *
-     * @param fadeOut true for a fade out, false for no fade out.
-     */
-    protected void setFadeOut(boolean fadeOut){
-        mIsFadeOut = fadeOut;
+
+    public void setCanSlideIn(boolean canSlideIn) {
+        this.canSlideIn = canSlideIn;
     }
 
     /**
@@ -224,6 +219,7 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                 // TODO: ensure this is a finger, and set a flag
                 if (!mIsEnabled || mIsDown)
                     return false;
+
                 cancel();
                 reset();
                 setDownView(getClickedView(event));
@@ -251,6 +247,8 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
             case MotionEvent.ACTION_UP: {
                 if (mVelocityTracker == null || !mEnabledDirections.contains(mDirection) || mDownPosition == ListView.INVALID_POSITION || mDownViewGroup.isSlideIn()) {
                     cancel();
+//                    if (hasSlideInView() && mVelocityTracker == null || mDownPosition == ListView.INVALID_POSITION)
+//                        slideBack();
                     reset();
                     break;
                 }
@@ -259,13 +257,11 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                 float deltaX = event.getRawX() - mDownX;
                 boolean isSwipe = Math.abs(deltaX) > (mViewWidth * mNormalSwipeFraction);
                 boolean validate = mDirection == mDirectionTemporary && mIsMoving && (isSwipe || isFling());
-                if (validate) {
-                    if(canDismiss()) {
-                        dismiss(isSwipe ? deltaX > 0 : mVelocityTracker.getXVelocity() > 0);
-                    } else {
-                        mCallbacks.onSwipeNormal(mDownPosition, mDirection);
-                        slideInView(mDownPosition);
-                    }
+                if (validate && canDismiss()) {
+                    dismiss(isSwipe ? deltaX > 0 : mVelocityTracker.getXVelocity() > 0);
+                } else if (validate && canSlideIn()) {
+                    mCallbacks.onSwipeNormal(mDownPosition, mDirection);
+                    slideInView(mDownPosition);
                 } else {
                     cancel();
                 }
@@ -283,7 +279,6 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                 addMovement(event);
                 float deltaX = event.getRawX() - mDownX;
                 float deltaY = event.getRawY() - mDownY;
-
                 if (mIsMoving) {
                     mIsFar = mDirection*deltaX >= 0 && Math.abs(deltaX) > mViewWidth*mFarSwipeFraction;
                     mDirection = getDirection(mIsFar, deltaX > 0);
@@ -294,11 +289,9 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                         mDownView.setTranslationX(deltaX - mSwipingSlop);
                         if(onSwipeActionTouchListener != null)
                             onSwipeActionTouchListener.onSliding(mDownViewGroup, mDownPosition);
-                        if(mIsFadeOut)
-                            mDownView.setAlpha(Math.max(0f, Math.min(1f, 1f - 2f * Math.abs(deltaX) / mViewWidth)));
                         return true;
                     }
-                } else if (Math.abs(deltaX) > mSlop && Math.abs(deltaY) < Math.abs(deltaX) / 2) {
+                } else if (Math.abs(deltaX) > mSlop && Math.abs(deltaY) < Math.abs(deltaX)) {
                     mIsMoving = true;
                     mSwipingSlop = (deltaX > 0 ? mSlop : -mSlop);
                     cancelListViewEvent(event);
@@ -307,6 +300,10 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
             }
         }
         return false;
+    }
+
+    private boolean canSlideIn() {
+        return canSlideIn;
     }
 
     private int getDirection(boolean isFarSwipe, boolean isRight) {
@@ -332,7 +329,9 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
 
     private void cancel() {
         if(mDownViewGroup != null && (mDownViewGroup.isSlideIn() || mDownViewGroup.getTranslationX() != 0))
-            mDownViewGroup.slideBack(null);
+            mDownViewGroup.slideBack();
+//        if(hasSlideInView())
+//            slideBack();
     }
 
     private void initVelocityTracker() {
@@ -387,7 +386,7 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         final int translation = dismissRight ? mViewWidth : -mViewWidth;
         mIsPerformingDismiss = true;
         mDownViewGroup.animateTranslationX(
-                (int) (translation*0.997f), // HACK to prevent bug with view flashing big quickly
+                (int) (translation * 0.997f), // HACK to prevent bug with view flashing big quickly
                 //mVelocityTracker.getXVelocity(pointerId),
                 new AnimatorListenerAdapter() {
                     @Override
@@ -410,6 +409,9 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         for (int i = 0; i < childCount; i++) {
             child = mListView.getChildAt(i);
             child.getHitRect(rect);
+            int width = rect.width();
+            rect.left = rect.left - width;
+            rect.right = rect.right + width;
             if (rect.contains(x, y)) {
                 return child;
             }
@@ -450,14 +452,35 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
 */
     }
 
+    public SwipeViewGroup getViewAtPosition(int position) {
+        if (mListView != null) {
+            int first = mListView.getFirstVisiblePosition();
+            int last = mListView.getLastVisiblePosition();
+            if (first <= position && position <= last) {
+                View view = mListView.getChildAt(position-first);
+                if(view instanceof SwipeViewGroup) {
+                    return ((SwipeViewGroup) view);
+                }
+            }
+        }
+        return null;
+    }
+
+    public boolean isViewSliding(int position) {
+        SwipeViewGroup swipeViewGroup = getViewAtPosition(position);
+        return swipeViewGroup != null && swipeViewGroup.isSliding();
+    }
+
     public void slideInView(int position) {
         if (mListView != null) {
-            mSlideInView = mSlideInView == position ? -1 : position;
+            mSlideInView = position;
             int first = mListView.getFirstVisiblePosition();
-            for (int i = 0; i < mListView.getChildCount(); i++) {
+            int count = mListView.getChildCount();
+            for (int i = 0; i < count; i++) {
                 int viewPosition = first + i;
-                if(mListView.getChildAt(i) instanceof SwipeViewGroup) {
-                    final SwipeViewGroup view = (SwipeViewGroup) mListView.getChildAt(i);
+                View v = mListView.getChildAt(i);
+                if(v instanceof SwipeViewGroup) {
+                    final SwipeViewGroup view = (SwipeViewGroup) v;
                     if (view.isSlideIn()) {
                         view.slideBack(new SwipeViewGroup.OnSlideBack() {
                             @Override
@@ -467,12 +490,25 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                         });
                     } else if (viewPosition == mSlideInView) {
                         int translationX = view.getWidth() - mSlideInOffset;
-                        view.slideIn(SwipeDirections.DIRECTION_NORMAL_RIGHT, translationX, null);
-
+                        view.slideIn(mDirection == SwipeDirections.DIRECTION_NEUTRAL ? SwipeDirections.DIRECTION_NORMAL_RIGHT : mDirection, translationX, null);
                     }
                 }
             }
         }
+    }
+
+    public void toggleSlideInView(int position) {
+        if (mListView != null) {
+            slideInView(mSlideInView == position ? -1 : position);
+        }
+    }
+
+    public boolean slideBack() {
+        if(hasSlideInView()) {
+            slideInView(-1);
+            return true;
+        }
+        return false;
     }
 
     public int getSlideInViewPosition() {
@@ -481,6 +517,10 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
 
     public boolean hasSlideInView() {
         return mSlideInView != -1;
+    }
+
+    public ListView getListView() {
+        return mListView;
     }
 
     public interface OnSwipeActionTouchListener {

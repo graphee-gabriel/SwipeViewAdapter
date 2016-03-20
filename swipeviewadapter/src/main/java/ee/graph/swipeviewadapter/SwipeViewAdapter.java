@@ -35,32 +35,43 @@ import java.util.List;
 public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchListener.ActionCallbacks {
     private static final String TAG = SwipeViewAdapter.class.getName();
     private SwipeViewTouchListener mTouchListener;
+    private List<Integer> itemViewTypesWithoutSwipeList = new ArrayList<>();
+    protected SwipeActionListener mSwipeActionListener;
+
     private boolean
+            mFixedBackgrounds = false,
+            canSlideIn = true,
             mFadeOut = false,
-            mIsFlinging = false;
+            mFadeOutLeft = true,
+            mFadeOutRight = true,
+            isFlinging = false;
+
     private float
             mFarSwipeFraction = 0.5f,
             mNormalSwipeFraction = 0.25f;
+
+    private int animSlideDuration = 200;
+
     protected SparseIntArray
             mBackgroundResIds = new SparseIntArray(),
             mBackgroundType = new SparseIntArray();
 
-    private List<Integer> itemViewTypesWithoutExpandList = new ArrayList<>();
-
-    protected SwipeActionListener mSwipeActionListener;
 
     public SwipeViewAdapter(BaseAdapter baseAdapter){
         super(baseAdapter);
     }
 
     @Override
-    public View getView(int position, View convertView, ViewGroup parent){
+    public View getView(final int position, final View convertView, final ViewGroup parent){
         SwipeViewGroup output = (SwipeViewGroup) convertView;
-
         int itemViewType = getItemViewType(position);
-        if (!itemViewTypesWithoutExpandList.contains(itemViewType)) {
+        if (!itemViewTypesWithoutSwipeList.contains(itemViewType)) {
             if (output == null) {
                 output = new SwipeViewGroup(parent.getContext());
+                output.setFixedBackground(mFixedBackgrounds);
+                output.setFadeOnTranslation(mFadeOut);
+                output.setFadeOnSlideLeft(mFadeOutLeft);
+                output.setFadeOnSlideRight(mFadeOutRight);
                 for (int i = 0; i < mBackgroundResIds.size(); i++) {
                     int direction = mBackgroundResIds.keyAt(i);
                     int layoutId = mBackgroundResIds.valueAt(i);
@@ -71,24 +82,26 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
                         onGetBackground(true, direction, position, bg, output);
                     }
                 }
+                output.setMinAnimDuration(animSlideDuration);
                 output.setSwipeTouchListener(mTouchListener);
             } else {
                 for (int i = 0; i < mBackgroundResIds.size(); i++) {
                     int direction = mBackgroundResIds.keyAt(i);
                     View bg = output.getBackground(direction);
-                    if(bg != null)
+                    if(bg != null) {
                         onGetBackground(false, direction, position, bg, output);
+                    }
                 }
             }
-
+            output.measureBackgrounds();
             output.setContentView(super.getView(position, output.getContentView(), output));
-            if (mSwipeActionListener != null)
-                mSwipeActionListener.onGetView(output);
         } else {
             output = new SwipeViewGroup(parent.getContext());
             output.setContentView(super.getView(position, output.getContentView(), output));
             output.setSwipeTouchListener(null);
         }
+        output.refreshVisibleView();
+        output.translateBackgrounds();
         return output;
     }
 
@@ -97,10 +110,15 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     }
 
     public void setItemViewTypesWithoutExpand(int... itemViewTypesWithoutExpand) {
-        itemViewTypesWithoutExpandList.clear();
+        itemViewTypesWithoutSwipeList.clear();
         for(int i : itemViewTypesWithoutExpand) {
-            itemViewTypesWithoutExpandList.add(itemViewTypesWithoutExpand[i]);
+            itemViewTypesWithoutSwipeList.add(itemViewTypesWithoutExpand[i]);
         }
+    }
+
+    public static void measureBackgrounds(ListView listView) {
+        for (int i = 0; i < listView.getChildCount(); i++)
+            ((SwipeViewGroup) listView.getChildAt(i)).measureBackgrounds();
     }
 
     /**
@@ -146,6 +164,19 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
             mTouchListener.slideInView(visiblePosition);
     }
 
+    public boolean isViewSliding(int visiblePosition) {
+        return mTouchListener != null && mTouchListener.isViewSliding(visiblePosition);
+    }
+
+    public void toggleSlideInView(int visiblePosition) {
+        if (mTouchListener != null)
+            mTouchListener.toggleSlideInView(visiblePosition);
+    }
+
+    public boolean slideBack() {
+        return mTouchListener != null && mTouchListener.slideBack();
+    }
+
     public int getSlideInViewPosition() {
         if (mTouchListener != null)
             return mTouchListener.getSlideInViewPosition();
@@ -159,14 +190,55 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     /**
      * Set whether items should have a fadeOut animation
      *
-     * @param mFadeOut true makes items fade out with a swipe (opacity -> 0)
+     * @param fadeOut true makes items fade out with a swipe (opacity -> 0)
      * @return A reference to the current instance so that commands can be chained
      */
     @SuppressWarnings("unused")
-    public SwipeViewAdapter setFadeOut(boolean mFadeOut){
-        this.mFadeOut = mFadeOut;
+    public SwipeViewAdapter setFadeOut(boolean fadeOut) {
+        this.mFadeOut = fadeOut;
+        return this;
+    }
+
+    /**
+     * Set whether items should have a fadeOut animation
+     *
+     * @param fadeOutLeft true makes items fade out with a left swipe (opacity -> 0)
+     * @return A reference to the current instance so that commands can be chained
+     */
+    @SuppressWarnings("unused")
+    public SwipeViewAdapter setFadeOutLeft(boolean fadeOutLeft){
+        this.mFadeOutLeft = fadeOutLeft;
+        return this;
+    }
+
+    /**
+     * Set whether items should have a fadeOut animation
+     *
+     * @param fadeOutRight true makes items fade out with a right swipe (opacity -> 0)
+     * @return A reference to the current instance so that commands can be chained
+     */
+    @SuppressWarnings("unused")
+    public SwipeViewAdapter setFadeOutRight(boolean fadeOutRight){
+        this.mFadeOutRight = fadeOutRight;
+        return this;
+    }
+
+    /**
+     * Set whether the backgrounds should be fixed or swipe in from the side
+     * The default value for this property is false: backgrounds will swipe in
+     *
+     * @param fixedBackgrounds true for fixed backgrounds, false for swipe in
+     */
+    @SuppressWarnings("unused")
+    public SwipeViewAdapter setFixedBackgrounds(boolean fixedBackgrounds){
+        this.mFixedBackgrounds = fixedBackgrounds;
+        return this;
+    }
+
+    public SwipeViewAdapter setCanSlideIn(boolean canSlideIn){
+        this.canSlideIn = canSlideIn;
         if (mTouchListener != null)
-            mTouchListener.setFadeOut(mFadeOut);
+            mTouchListener.setCanSlideIn(canSlideIn);
         return this;
     }
 
@@ -227,7 +299,7 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
             @Override
             public void onScrollStateChanged(AbsListView absListView, int scrollState) {
                 mTouchListener.onScrollStateChanged(absListView, scrollState);
-                mIsFlinging = scrollState == SCROLL_STATE_FLING;
+                isFlinging = scrollState == SCROLL_STATE_FLING;
                 if (mSwipeActionListener != null)
                     mSwipeActionListener.onScrollStateChanged(absListView, scrollState);
             }
@@ -244,16 +316,16 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
             public void onSliding(SwipeViewGroup swipeViewGroup, int position) {
                 if (mSwipeActionListener != null)
                     mSwipeActionListener.onSliding(swipeViewGroup, position);
+                slideInView(-1);
             }
         });
-        mTouchListener.setFadeOut(mFadeOut);
         mTouchListener.setNormalSwipeFraction(mNormalSwipeFraction);
         mTouchListener.setFarSwipeFraction(mFarSwipeFraction);
         return this;
     }
 
-    public boolean ismIsFlinging() {
-        return mIsFlinging;
+    public boolean isFlinging() {
+        return isFlinging;
     }
 
     /**
@@ -277,6 +349,12 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
         return addBackground(key, resId, SwipeViewGroup.LAYOUT_MATCH_PARENT);
     }
 
+    @Override
+    public void notifyDataSetChanged() {
+        super.notifyDataSetChanged();
+        //slideBack();
+    }
+
     /**
      * Set the listener for swipe events
      *
@@ -288,6 +366,10 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
         return this;
     }
 
+    public void setAnimSlideDuration(int animSlideDuration) {
+        this.animSlideDuration = animSlideDuration;
+    }
+
     /**
      * Interface that listeners of swipe events should implement
      */
@@ -297,7 +379,6 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
         void onSwipeNormal(int position, int direction);
         void onScrollStateChanged(AbsListView absListView, int scrollState);
         void onScroll(AbsListView absListView, int i, int i1, int i2);
-        void onGetView(View view);
         void onSliding(SwipeViewGroup swipeViewGroup, int position);
     }
 }

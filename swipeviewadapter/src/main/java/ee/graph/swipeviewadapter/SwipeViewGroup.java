@@ -29,7 +29,6 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.Checkable;
 import android.widget.FrameLayout;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -65,14 +64,21 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
     private OnTouchListener swipeTouchListener;
 
     private int
+            slideInOffsetLeft = 0,
+            slideInOffsetRight = 0,
             mContentViewHeight = -1,
             visibleView = SwipeDirections.DIRECTION_NEUTRAL,
             slideInView = SwipeDirections.DIRECTION_NEUTRAL,
-            mMinAnimationTime,
-            mMaxAnimationTime;
+            mMinAnimDuration,
+            mMaxAnimDuration;
 
     private boolean
+            fadeOnSlideLeft = true,
+            fadeOnSlideRight = true,
+            fixedBackground,
+            fadeOnTranslation,
             isChecked;
+
     private OnSlidingListener onSlidingListener;
 
     /**
@@ -116,9 +122,9 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         // FIXME: probably messes with accessibility. Doesn't fix root cause (see onTouchEvent)
         setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
         setClipChildren(false);
-        mMinAnimationTime = getContext().getResources().getInteger(
+        mMinAnimDuration = getContext().getResources().getInteger(
                 android.R.integer.config_shortAnimTime);
-        mMaxAnimationTime = mMinAnimationTime * 3;
+        mMaxAnimDuration = mMinAnimDuration * 3;
     }
 
     /**
@@ -134,21 +140,21 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
             removeView(mBackgroundMap.get(direction));
         mBackgroundMap.put(direction, background);
         mBackgroundType.put(direction, type);
-        setVisibleView(slideInView);
+        refreshVisibleView();
         background.setVisibility(slideInView == direction ? VISIBLE : INVISIBLE);
         addView(background);
         translateBackgrounds();
-       if(type == LAYOUT_MATCH_PARENT) {
+        if(type == LAYOUT_MATCH_PARENT) {
             mBackgroundMatchParent.remove((Integer) direction);
             mBackgroundMatchParent.add(direction);
         } else {
             background.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    background.getViewTreeObserver().removeOnPreDrawListener(this);
-                    mBackgroundHeight.put(direction, type == LAYOUT_DISMISS ? 0 : background.getHeight());
-                    return true;
-                }
+            @Override
+            public boolean onPreDraw() {
+            background.getViewTreeObserver().removeOnPreDrawListener(this);
+                measureBackground(direction);
+                return true;
+            }
             });
         }
         return this;
@@ -162,7 +168,6 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         if(SwipeDirections.DIRECTION_NEUTRAL != visibleView && mBackgroundMap.get(visibleView) == null)
             return;
         translateBackgrounds();
-
         contentView.setLayoutParams(new LayoutParams(match, wrap));
         contentView.measure(match, wrap);
 
@@ -172,12 +177,22 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
             resetBackgrounds(0);
             this.getLayoutParams().height = wrap;
             contentView.getLayoutParams().height = wrap;
-            //Log.d(TAG, "TRANS 0");
+            contentView.setAlpha(1.f);
         }
 
         if(visibleView != SwipeDirections.DIRECTION_NEUTRAL) {
             View view = mBackgroundMap.get(visibleView);
             view.setVisibility(View.VISIBLE);
+            if(fadeOnTranslation) {
+                view.setAlpha(getSwipeRatio());
+                // HACK => SHOULD BE ABLE TO SELECT WITCH DIR DISABLED FOR ALPHA
+                if (((visibleView == SwipeDirections.DIRECTION_NORMAL_LEFT || visibleView == SwipeDirections.DIRECTION_FAR_LEFT) && (fadeOnSlideLeft || slideInOffsetLeft == 0))
+                    ||
+                    ((visibleView == SwipeDirections.DIRECTION_NORMAL_RIGHT || visibleView == SwipeDirections.DIRECTION_FAR_RIGHT) && (fadeOnSlideRight || slideInOffsetRight == 0))) {
+
+                    getContentView().setAlpha(getSwipeRatioReversed());
+                }
+            }
             if(mBackgroundMatchParent.contains(visibleView)) {
                 view.getLayoutParams().height = height;
             } else {
@@ -187,8 +202,8 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
                     this.getLayoutParams().height = wrap;
                 } else {
                     int layoutHeight = getViewHeight(mContentViewHeight, viewFinalHeight, getSwipeRatio(viewFinalHeight == 0 ? 1 : mExpandSwipeRatio));
-                        view.getLayoutParams().height = height;
-                        this.getLayoutParams().height = layoutHeight;
+                    view.getLayoutParams().height = height;
+                    this.getLayoutParams().height = layoutHeight;
                 }
             }
         }
@@ -222,19 +237,10 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         setLayoutParams(this, match, wrap);
         this.measure(match, wrap);
         setLayoutParams(contentView, match, wrap);
-        mContentViewHeight = -1;
-        setVisibleView(SwipeDirections.DIRECTION_NEUTRAL);
-        contentView.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-            @Override
-            public boolean onPreDraw() {
-                contentView.getViewTreeObserver().removeOnPreDrawListener(this);
-                contentView.measure(match, wrap);
-                mContentViewHeight = contentView.getHeight();
-                resetBackgrounds(0);
-                return true;
-            }
-        });
-
+        setContentViewHeight(-1);
+        //setVisibleView(SwipeDirections.DIRECTION_NEUTRAL);
+        //refreshVisibleView();
+        measureContentViewHeight();
         return this;
     }
 
@@ -242,8 +248,11 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         for (int i = 0; i < mBackgroundMap.size(); i++) {
             int key = mBackgroundMap.keyAt(i);
             View background = mBackgroundMap.get(key);
+            background.setAlpha(1.f);
             setLayoutParams(background, match, height);
+            background.setVisibility(key == visibleView ? VISIBLE : INVISIBLE);
         }
+        translateBackgrounds();
     }
 
     private void setLayoutParams(View view, int width, int height) {
@@ -266,13 +275,15 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
     }
 
     public void measureBackground(int direction) {
-        ViewGroup background = (ViewGroup) mBackgroundMap.get(direction);
-
-        background.measure(MeasureSpec.makeMeasureSpec(((View) background.getParent()).getWidth(), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(1000, MeasureSpec.AT_MOST));
-        int height = background.getMeasuredHeight();
-        //int height = getMeasuredHeight(background);
         boolean isDismiss = mBackgroundType.get(direction) == LAYOUT_DISMISS;
-        mBackgroundHeight.put(direction, isDismiss ? 0 : height);
+        if(isDismiss) {
+            mBackgroundHeight.put(direction, 0);
+        } else {
+            ViewGroup background = (ViewGroup) mBackgroundMap.get(direction);
+            background.measure(MeasureSpec.makeMeasureSpec(((View) background.getParent()).getWidth(), MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(1000, MeasureSpec.AT_MOST));
+            int height = background.getMeasuredHeight();
+            mBackgroundHeight.put(direction, height);
+        }
     }
 
     public void measureBackgrounds() {
@@ -282,30 +293,16 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         }
     }
 
-    private int getMeasuredHeight(ViewGroup viewGroup) {
-        viewGroup.measure(match,wrap);
-        int height = viewGroup.getMeasuredHeight();
-        for(TextView textView : findAllTextView(viewGroup)) {
-            height += (textView.getLineCount()-1) * textView.getLineHeight();
-        }
-        return height;
-    }
-
-    private List<TextView> findAllTextView(ViewGroup v) {
-        List<TextView> result = new ArrayList<>();
-        for (int i = 0; i < v.getChildCount(); i++) {
-            Object child = v.getChildAt(i);
-            if (child instanceof TextView)
-                result.add((TextView) child);
-            else if (child instanceof ViewGroup)
-                for(TextView tv: findAllTextView((ViewGroup) child))
-                    result.add(tv);
-        }
-        return result;
-    }
-
     public float getSwipeRatio() {
-        float ratio = 1.66f*Math.abs(getTranslationX()) / getWidth();
+        boolean right = visibleView == SwipeDirections.DIRECTION_NORMAL_RIGHT || visibleView == SwipeDirections.DIRECTION_FAR_RIGHT;
+        float ratio = 1.66f*Math.abs(getTranslationX()) / (getWidth() - (right ? slideInOffsetRight : slideInOffsetLeft));
+        ratio = ratio > 1.f ? 1.f : ratio;
+        return ratio;
+    }
+
+    public float getRealSwipeRatio() {
+        boolean right = visibleView == SwipeDirections.DIRECTION_NORMAL_RIGHT || visibleView == SwipeDirections.DIRECTION_FAR_RIGHT;
+        float ratio = Math.abs(getTranslationX()) / (getWidth() - (right ? slideInOffsetRight : slideInOffsetLeft));
         ratio = ratio > 1.f ? 1.f : ratio;
         return ratio;
     }
@@ -319,7 +316,7 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
      *
      * @return contentView of the Layout
      */
-    public View getContentView(){
+    public View getContentView() {
         return contentView;
     }
 
@@ -327,10 +324,14 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
      * Move all backgrounds to the edge of the Layout so they can be swiped in
      */
     public void translateBackgrounds() {
+        if (mBackgroundMap == null)
+            return;
+        //float ratio = fixedBackground ? getRealSwipeRatio() : 1.f;
+        float ratio = 0.f;
         for (int i=0;i<mBackgroundMap.size();i++) {
             int key = mBackgroundMap.keyAt(i);
             View background = mBackgroundMap.valueAt(i);
-            background.setTranslationX(-Integer.signum(key)*background.getWidth());
+            background.setTranslationX(-Integer.signum(key)*background.getWidth()*ratio);
         }
     }
 
@@ -341,7 +342,11 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
     public void resetViewPos() {
         setTranslationX(0);
         slideInView = SwipeDirections.DIRECTION_NEUTRAL;
-        setVisibleView(slideInView);
+        refreshVisibleView();
+    }
+
+    public void slideBack() {
+        slideBack(null);
     }
 
     public void slideBack(final OnSlideBack listener) {
@@ -349,14 +354,14 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
             @Override
             public void onAnimationEnd(Animator animation) {
                 listener.onSlideBackEnd(animation);
-                setVisibleView(slideInView);
+                refreshVisibleView();
                 resetBackgrounds(0);
             }
 
             @Override
             public void onAnimationCancel(Animator animation) {
                 listener.onSlideBackEnd(animation);
-                setVisibleView(slideInView);
+                refreshVisibleView();
                 resetBackgrounds(0);
             }
         };
@@ -366,10 +371,11 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
 
     private void slideIn(int direction, float velocity, boolean useVelocity, int translation, AnimatorListenerAdapter animatorListenerAdapter) {
         boolean right = direction == SwipeDirections.DIRECTION_NORMAL_RIGHT || direction == SwipeDirections.DIRECTION_FAR_RIGHT;
+        int translationFinal = right ? (translation-slideInOffsetRight) : -(translation-slideInOffsetLeft);
         setVisibleView(direction);
-        animateTranslationX(right ? translation : -translation, velocity, useVelocity, animatorListenerAdapter);
+        animateTranslationX(translationFinal, velocity, useVelocity, animatorListenerAdapter);
         slideInView = direction;
-        setVisibleView(slideInView);
+        refreshVisibleView();
     }
 
     public void slideIn(int direction, int translation, AnimatorListenerAdapter animatorListenerAdapter) {
@@ -387,19 +393,19 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
     public boolean toggleSlide(int direction, int translation, AnimatorListenerAdapter animatorListenerAdapter) {
         boolean isSlideIn = isSlideIn();
         if(isSlideIn)
-            slideBack(null);
+            slideBack();
         else
             slideIn(direction, translation, animatorListenerAdapter);
         return !isSlideIn;
     }
 
-    private void animateTranslationX(int translationX, float velocity, boolean useVelocity, AnimatorListenerAdapter animatorListenerAdapter) {
-        int dur = mMinAnimationTime;
+    private void animateTranslationX(int translationX, float velocity, boolean useVelocity, final AnimatorListenerAdapter animatorListenerAdapter) {
+        int dur = mMinAnimDuration;
         if(useVelocity) {
             float distance = translationX - getTranslationX();
             int duration = (int) (distance * 1000 / velocity);
-            if(duration > mMinAnimationTime) {
-                dur = duration > mMaxAnimationTime ? mMaxAnimationTime : duration;
+            if(duration > mMinAnimDuration) {
+                dur = duration > mMaxAnimDuration ? mMaxAnimDuration : duration;
             }
         }
         ValueAnimator animator = ValueAnimator.ofFloat(getTranslationX(), translationX).setDuration(dur);
@@ -495,6 +501,50 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
         this.setChecked(!isChecked);
     }
 
+    public void setFixedBackground(boolean fixedBackground) {
+        this.fixedBackground = fixedBackground;
+    }
+
+    public void setFadeOnTranslation(boolean fadeOnTranslation) {
+        this.fadeOnTranslation = fadeOnTranslation;
+    }
+
+    public boolean isSliding() {
+        return getTranslationX() != 0.f;
+    }
+
+    public int getSlideInOffsetRight() {
+        return slideInOffsetRight;
+    }
+
+    public void setSlideInOffsetRight(int slideInOffsetRight) {
+        this.slideInOffsetRight = slideInOffsetRight;
+    }
+
+    public int getSlideInOffsetLeft() {
+        return slideInOffsetLeft;
+    }
+
+    public void setSlideInOffsetLeft(int slideInOffsetLeft) {
+        this.slideInOffsetLeft = slideInOffsetLeft;
+    }
+
+    public boolean getFadeOnSlideLeft() {
+        return fadeOnSlideLeft;
+    }
+
+    public void setFadeOnSlideLeft(boolean fadeOnSlideLeft) {
+        this.fadeOnSlideLeft = fadeOnSlideLeft;
+    }
+
+    public boolean getFadeOnSlideRight() {
+        return fadeOnSlideRight;
+    }
+
+    public void setFadeOnSlideRight(boolean fadeOnSlideRight) {
+        this.fadeOnSlideRight = fadeOnSlideRight;
+    }
+
     public interface OnSlideBack {
         void onSlideBackEnd(Animator animation);
     }
@@ -505,13 +555,51 @@ public class SwipeViewGroup extends FrameLayout implements Checkable {
 
     @Override
     public void setTranslationX(float translationX) {
-        super.setTranslationX(translationX);
+        if (fixedBackground)
+            getContentView().setTranslationX(translationX);
+        else
+            super.setTranslationX(translationX);
         updateView();
         if(onSlidingListener != null)
             onSlidingListener.onSliding(translationX);
     }
 
+    @Override
+    public float getTranslationX() {
+        return fixedBackground ? getContentView().getTranslationX() : super.getTranslationX();
+    }
+
     public void setOnSlidingListener(OnSlidingListener onSlidingListener) {
         this.onSlidingListener = onSlidingListener;
     }
+
+    public void setContentViewHeight(int contentViewHeight) {
+        this.mContentViewHeight = contentViewHeight;
+    }
+
+    public void measureContentViewHeight() {
+        getContentView().getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                getContentView().getViewTreeObserver().removeOnPreDrawListener(this);
+                getContentView().measure(match, wrap);
+                setContentViewHeight(getContentView().getHeight());
+                resetBackgrounds(0);
+                return true;
+            }
+        });
+    }
+
+    public int getSlideInView() {
+        return slideInView;
+    }
+
+    public void refreshVisibleView() {
+        setVisibleView(slideInView);
+    }
+
+    public void setMinAnimDuration(int minAnimDuration) {
+        this.mMinAnimDuration = minAnimDuration;
+    }
+
 }
