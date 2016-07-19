@@ -216,6 +216,7 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         switch (action) {
 
             case MotionEvent.ACTION_DOWN: {
+
                 // TODO: ensure this is a finger, and set a flag
                 if (!mIsEnabled || mIsDown)
                     return false;
@@ -246,9 +247,9 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
 
             case MotionEvent.ACTION_UP: {
                 if (mVelocityTracker == null || !mEnabledDirections.contains(mDirection) || mDownPosition == ListView.INVALID_POSITION || mDownViewGroup.isSlideIn()) {
-                    cancel();
-//                    if (hasSlideInView() && mVelocityTracker == null || mDownPosition == ListView.INVALID_POSITION)
-//                        slideBack();
+                    //cancel();
+                    //if (hasSlideInView() && mVelocityTracker == null || mDownPosition == ListView.INVALID_POSITION)
+                    //    slideBack();
                     reset();
                     break;
                 }
@@ -372,9 +373,7 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         // Cancel ListView's touch (un-highlighting the item)
         mListView.requestDisallowInterceptTouchEvent(true);
         MotionEvent cancelEvent = MotionEvent.obtain(motionEvent);
-        cancelEvent.setAction(MotionEvent.ACTION_CANCEL |
-                (motionEvent.getActionIndex()
-                        << MotionEvent.ACTION_POINTER_INDEX_SHIFT));
+        cancelEvent.setAction(MotionEvent.ACTION_CANCEL | (motionEvent.getActionIndex() << MotionEvent.ACTION_POINTER_INDEX_SHIFT));
         mListView.onTouchEvent(cancelEvent);
         cancelEvent.recycle();
     }
@@ -438,8 +437,6 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
 
     private void performDismiss(View dismissView, int dismissPosition, final int direction) {
         mCallbacks.onSwipeToDismiss(dismissPosition, direction);
-
-        Log.d(TAG, "SET TRANSLATION TO 0");
         mDownPosition = ListView.INVALID_POSITION; // Reset mDownPosition to avoid MotionEvent.ACTION_UP trying to start a dismiss
         dismissView.setAlpha(1f);
         dismissView.setTranslationX(0);
@@ -471,7 +468,7 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
         return swipeViewGroup != null && swipeViewGroup.isSliding();
     }
 
-    public void slideInView(int position) {
+    public void slideInView(int position, int direction) {
         if (mListView != null) {
             mSlideInView = position;
             int first = mListView.getFirstVisiblePosition();
@@ -490,11 +487,15 @@ public class SwipeViewTouchListener implements View.OnTouchListener {
                         });
                     } else if (viewPosition == mSlideInView) {
                         int translationX = view.getWidth() - mSlideInOffset;
-                        view.slideIn(mDirection == SwipeDirections.DIRECTION_NEUTRAL ? SwipeDirections.DIRECTION_NORMAL_RIGHT : mDirection, translationX, null);
+                        view.slideIn(direction == SwipeDirections.DIRECTION_NEUTRAL ? SwipeDirections.DIRECTION_NORMAL_RIGHT : direction, translationX, null);
                     }
                 }
             }
         }
+    }
+
+    public void slideInView(int position) {
+        slideInView(position, mDirection);
     }
 
     public void toggleSlideInView(int position) {

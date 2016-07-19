@@ -43,7 +43,7 @@ public class WrappingAdapter extends BaseAdapter {
     }
 
     @Override
-    public View getView(final int position, final View convertView, final ViewGroup parent){
+    public View getView(final int position, final View convertView, final ViewGroup parent) {
         return mBaseAdapter.getView(position,convertView,parent);
     }
 

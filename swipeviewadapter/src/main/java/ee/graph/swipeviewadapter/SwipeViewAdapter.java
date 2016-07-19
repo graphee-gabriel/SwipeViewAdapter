@@ -36,6 +36,8 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     private static final String TAG = SwipeViewAdapter.class.getName();
     private SwipeViewTouchListener mTouchListener;
     private List<Integer> itemViewTypesWithoutSwipeList = new ArrayList<>();
+    private List<Integer> positionWithBackgroundLoaded = new ArrayList<>();
+    private int latestPositionWithLoadedBackground = -1;
     protected SwipeActionListener mSwipeActionListener;
 
     private boolean
@@ -62,7 +64,7 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     }
 
     @Override
-    public View getView(final int position, final View convertView, final ViewGroup parent){
+    public View getView(final int position, final View convertView, final ViewGroup parent) {
         SwipeViewGroup output = (SwipeViewGroup) convertView;
         int itemViewType = getItemViewType(position);
         if (!itemViewTypesWithoutSwipeList.contains(itemViewType)) {
@@ -72,19 +74,12 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
                 output.setFadeOnTranslation(mFadeOut);
                 output.setFadeOnSlideLeft(mFadeOutLeft);
                 output.setFadeOnSlideRight(mFadeOutRight);
-                for (int i = 0; i < mBackgroundResIds.size(); i++) {
-                    int direction = mBackgroundResIds.keyAt(i);
-                    int layoutId = mBackgroundResIds.valueAt(i);
-                    int type = mBackgroundType.get(direction);
-                    View bg = View.inflate(parent.getContext(), layoutId, null);
-                    if(bg != null) {
-                        output.addBackground(bg, direction, type);
-                        onGetBackground(true, direction, position, bg, output);
-                    }
-                }
+                output.setOnSlideInListener(getOnSlideInListener(position));
+                getSwipeView(output);
                 output.setMinAnimDuration(animSlideDuration);
                 output.setSwipeTouchListener(mTouchListener);
             } else {
+                getSwipeView(output);
                 for (int i = 0; i < mBackgroundResIds.size(); i++) {
                     int direction = mBackgroundResIds.keyAt(i);
                     View bg = output.getBackground(direction);
@@ -92,8 +87,15 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
                         onGetBackground(false, direction, position, bg, output);
                     }
                 }
+                output.setOnSlideInListener(getOnSlideInListener(position));
             }
-            output.measureBackgrounds();
+
+            //output.measureBackgrounds();
+
+            // PERFORMANCE HACK
+            // without min height, the view is 0px, therefore all views are inflated on start
+            output.setMinimumHeight(120);
+            // END HACK
             output.setContentView(super.getView(position, output.getContentView(), output));
         } else {
             output = new SwipeViewGroup(parent.getContext());
@@ -103,6 +105,10 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
         output.refreshVisibleView();
         output.translateBackgrounds();
         return output;
+    }
+
+    public void getSwipeView(SwipeViewGroup output) {
+
     }
 
     public void onGetBackground(boolean isCreate, int direction, int position, View background, SwipeViewGroup parent) {
@@ -121,6 +127,31 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
             ((SwipeViewGroup) listView.getChildAt(i)).measureBackgrounds();
     }
 
+    public void loadBackgrounds(SwipeViewGroup output, int position) {
+        if (output == null || latestPositionWithLoadedBackground == position)
+            return;
+        latestPositionWithLoadedBackground = position;
+        boolean isCreate = !positionWithBackgroundLoaded.contains(position);
+        if (isCreate)
+            positionWithBackgroundLoaded.add(position);
+        for (int i = 0; i < mBackgroundResIds.size(); i++) {
+            int direction = mBackgroundResIds.keyAt(i);
+            int layoutId = mBackgroundResIds.valueAt(i);
+            int type = mBackgroundType.get(direction);
+            if (isCreate) {
+                View bg = View.inflate(output.getContext(), layoutId, null);
+                if(bg != null) {
+                    output.addBackground(bg, direction, type);
+                    onGetBackground(true, direction, position, bg, output);
+                }
+            } else {
+                View bg = output.getBackground(direction);
+                if (bg != null)
+                    onGetBackground(false, direction, position, bg, output);
+            }
+        }
+    }
+
     /**
      * SwipeViewTouchListener.ActionCallbacks callback
      * We just link it through to our own interface
@@ -129,7 +160,7 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
      * @return boolean indicating whether the item has actions
      */
     @Override
-    public boolean hasActions(int position){
+    public boolean hasActions(int position) {
         return mSwipeActionListener != null && mSwipeActionListener.hasActions(position);
     }
 
@@ -162,6 +193,11 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     public void slideInView(int visiblePosition) {
         if (mTouchListener != null)
             mTouchListener.slideInView(visiblePosition);
+    }
+
+    public void slideInView(int visiblePosition, int direction) {
+        if (mTouchListener != null)
+            mTouchListener.slideInView(visiblePosition, direction);
     }
 
     public boolean isViewSliding(int visiblePosition) {
@@ -302,6 +338,7 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
                 isFlinging = scrollState == SCROLL_STATE_FLING;
                 if (mSwipeActionListener != null)
                     mSwipeActionListener.onScrollStateChanged(absListView, scrollState);
+                latestPositionWithLoadedBackground = -1;
             }
 
             @Override
@@ -317,13 +354,23 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
                 if (mSwipeActionListener != null)
                     mSwipeActionListener.onSliding(swipeViewGroup, position);
                 slideInView(-1);
+                loadBackgrounds(swipeViewGroup, position);
+                //swipeViewGroup.measureBackgrounds();
             }
         });
         mTouchListener.setNormalSwipeFraction(mNormalSwipeFraction);
         mTouchListener.setFarSwipeFraction(mFarSwipeFraction);
         return this;
     }
-
+    private SwipeViewGroup.OnSlideIn getOnSlideInListener(final int position) {
+        return new SwipeViewGroup.OnSlideIn() {
+            @Override
+            public void onSlideIn(SwipeViewGroup view) {
+                loadBackgrounds(view, position);
+                view.measureBackgrounds();
+            }
+        };
+    }
     public boolean isFlinging() {
         return isFlinging;
     }
@@ -352,7 +399,14 @@ public class SwipeViewAdapter extends WrappingAdapter implements SwipeViewTouchL
     @Override
     public void notifyDataSetChanged() {
         super.notifyDataSetChanged();
+        positionWithBackgroundLoaded.clear();
         //slideBack();
+    }
+
+    @Override
+    public void notifyDataSetInvalidated() {
+        super.notifyDataSetInvalidated();
+        positionWithBackgroundLoaded.clear();
     }
 
     /**
